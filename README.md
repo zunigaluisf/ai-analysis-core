@@ -1,17 +1,15 @@
-# AI Analysis Core
+# 🧠 AI Analysis Core
 
-This module analyzes performance test files (CSV + JSON) using GPT-4 and returns a summary, insights and recommendations.
+This is the core engine that powers the performance test analysis via AI for the **AI Performance Analyzer** platform.
 
-## Usage
+It uses `OpenAI` models (e.g. `gpt-4o`, `gpt-3.5-turbo`) to interpret load test results, extract key insights, and generate recommendations based on input files like `metrics.csv`, `summary.json`, or ZIP bundles.
+
+---
+
+## 🚀 Quick Start (Local)
+
+### 1. Clone the repository
 
 ```bash
-python main.py path_to_file_or_zip
-```
-
-## Setup
-
-```bash
-pip install -r requirements.txt
-cp .env.example .env
-# Add your OpenAI key
-```
+git clone https://github.com/your-org/ai-analysis-core.git
+cd ai-analysis-core

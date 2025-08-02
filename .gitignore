@@ -41,3 +41,17 @@ Thumbs.db
 .idea/
 *.swp
 
+# Added additional ignores for project-specific files
+# FastAPI specific
+*.db
+
+# Reports and analysis
+reports-to-analyze/
+
+# Ignore metrics and summary files
+metrics.csv
+summary.json
+
+# Ignore node_modules directory
+node_modules/
+
