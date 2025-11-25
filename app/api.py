@@ -1,16 +1,31 @@
+import json
+import logging
 import os
 import shutil
-import uuid
 import tempfile
-import json
+import uuid
+from pathlib import Path
 from typing import List
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
-from fastapi.responses import JSONResponse
-from app.analyzer import analyze
-import logging
 
-# Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import JSONResponse
+
+from app.analyzer import analyze
+
+
+def setup_logging():
+  enabled = os.getenv("LOG_ENABLED", "true").lower() == "true"
+  if not enabled:
+      return
+  default_path = Path(__file__).resolve().parents[1] / "analysis-core.log"
+  log_file = Path(os.getenv("AICORE_LOG_FILE", default_path))
+  log_file.parent.mkdir(parents=True, exist_ok=True)
+  logging.basicConfig(
+      level=logging.INFO,
+      format='%(asctime)s - %(levelname)s - %(message)s',
+      handlers=[logging.FileHandler(log_file), logging.StreamHandler()]
+  )
+setup_logging()
 
 app = FastAPI()
 

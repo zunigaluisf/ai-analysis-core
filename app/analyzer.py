@@ -24,27 +24,33 @@ def analyze(files: List[Dict], context: Dict) -> Dict:
     prompt = build_prompt(files, context)
     ai_response = ask_gpt(prompt)
     print("AI Response:", ai_response)  # Debugging log
-    # Robust parsing based on expected headers
+    # Parse into sections; fall back to full response as summary if headers missing
     sections = {"summary": "", "insights": "", "recommendations": ""}
-   # current = None
-   # for line in ai_response.splitlines():
-   #     line_clean = line.strip().lower()
-   #     if line_clean == "summary:":
-   #         current = "summary"
-   #     elif line_clean == "insights:":
-   #         current = "insights"
-   #     elif line_clean == "recommendations:":
-   #         current = "recommendations"
-   #     elif current:
-   #         sections[current] += line + "\n"
+    current = None
+    for line in ai_response.splitlines():
+        line_clean = line.strip().lower()
+        if line_clean.startswith("summary:"):
+            current = "summary"
+            continue
+        if line_clean.startswith("insights:"):
+            current = "insights"
+            continue
+        if line_clean.startswith("recommendations:"):
+            current = "recommendations"
+            continue
+        if current:
+            sections[current] += line + "\n"
+
+    # If nothing parsed, treat entire response as summary
+    if not any(sections.values()):
+        sections["summary"] = ai_response
 
     print("AI Response Sections:", sections)  # Debugging log
     return {
         "summary": sections["summary"].strip(),
         "insights": sections["insights"].strip(),
         "recommendations": sections["recommendations"].strip(),
-        "response" : ai_response.strip(),
+        "response": ai_response.strip(),
         "model_used": os.getenv("OPENAI_MODEL", "unknown"),
         "analyzed_at": datetime.utcnow().isoformat() + "Z"
     }
-
