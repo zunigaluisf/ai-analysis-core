@@ -8,7 +8,7 @@ from openai import OpenAI
 load_dotenv()
 
 # Default model can be overridden via the OPENAI_MODEL environment variable
-MODEL = os.getenv("OPENAI_MODEL", "gpt-4")
+MODEL = os.getenv("OPENAI_MODEL", "gpt-4.1")
 
 _client: Optional[OpenAI] = None
 
@@ -47,6 +47,6 @@ def ask_gpt(prompt: str) -> str:
     response = _get_client().chat.completions.create(
         model=MODEL,
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.4,
+        temperature=0.4
     )
     return response.choices[0].message.content
