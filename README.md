@@ -6,6 +6,10 @@ It uses `OpenAI` models (e.g. `gpt-4o`, `gpt-3.5-turbo`) to interpret load test 
 
 ---
 
+## 🔑 API Key Setup
+
+Store your OpenAI key in `openai_api_key.txt` at the project root (this file is gitignored), or set `OPENAI_API_KEY` in your shell. You can also point to a custom location with `OPENAI_API_KEY_FILE`.
+
 ## 🚀 Quick Start (Local)
 
 ### 1. Clone the repository
