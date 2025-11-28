@@ -7,6 +7,8 @@ from pathlib import Path
 from datetime import datetime
 from app.analyzer import analyze
 
+
+
 def extract_if_zip(path: str, extract_to="tmp") -> str:
     """
     Extracts ZIP if necessary, returns folder path with extracted or single file.
