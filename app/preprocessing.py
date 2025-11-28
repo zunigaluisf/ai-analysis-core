@@ -2,9 +2,10 @@ import logging
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
 
 from app.ai_engine import SUMMARY_MODEL, ask_gpt
+from app.progress import progress_manager
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _read_file(path: Path) -> Tuple[str, int]:
         return "", 0
 
 
-def _summarize_chunk(file_name: str, file_type: str, chunk_text: str, chunk_index: int, total_chunks: int) -> str:
+def _summarize_chunk(file_name: str, file_type: str, chunk_text: str, chunk_index: int, total_chunks: int, progress_ctx=None) -> str:
     prompt = (
         f"You are summarizing {file_type or 'file'} content for performance analysis.\n"
         f"File: {file_name}\n"
@@ -77,15 +78,48 @@ def _summarize_chunk(file_name: str, file_type: str, chunk_text: str, chunk_inde
         "----------------\n"
         f"{chunk_text[:MAX_CHARS_PER_CHUNK]}\n"
     )
-    return ask_gpt(prompt, model=SUMMARY_MODEL, temperature=0.2)
+    if progress_ctx:
+        progress_manager.update(
+            progress_ctx["job_id"],
+            step="summarizing_chunk",
+            message=f"Summarizing chunk {chunk_index + 1}/{total_chunks} for {file_name}",
+            file_name=file_name,
+            file_id=progress_ctx.get("file_id"),
+            file_status="summarizing",
+            chunk_index=chunk_index + 1,
+            chunk_total=total_chunks,
+            log=f"Sending chunk {chunk_index + 1}/{total_chunks} of {file_name} to AI",
+        )
+    result = ask_gpt(prompt, model=SUMMARY_MODEL, temperature=0.2)
+    if progress_ctx:
+        # update overall progress portion
+        per_file_share = progress_ctx.get("per_file_share", 0)
+        chunk_progress = (chunk_index + 1) / total_chunks if total_chunks else 1
+        new_progress = progress_ctx.get("base_progress", 0) + per_file_share * chunk_progress
+        progress_manager.update(
+            progress_ctx["job_id"],
+            progress=new_progress,
+            step="summarizing_chunk",
+            message=f"AI summary received for chunk {chunk_index + 1}/{total_chunks} ({file_name})",
+            file_name=file_name,
+            file_id=progress_ctx.get("file_id"),
+            file_status="summarizing",
+            chunk_index=chunk_index + 1,
+            chunk_total=total_chunks,
+            log=f"AI summary received for chunk {chunk_index + 1}/{total_chunks} ({file_name})",
+        )
+    return result
 
 
-def _summarize_file_from_chunks(file_name: str, file_type: str, chunks: List[str]) -> Tuple[str, List[str]]:
+def _summarize_file_from_chunks(file_name: str, file_type: str, chunks: List[str], progress_ctx=None) -> Tuple[str, List[str]]:
     chunk_summaries = [None] * len(chunks)
     # Parallel chunk summarization with ordering preservation
     try:
         with ThreadPoolExecutor(max_workers=MAX_CHUNK_WORKERS) as executor:
-            future_to_idx = {executor.submit(_summarize_chunk, file_name, file_type, chunk, idx, len(chunks)): idx for idx, chunk in enumerate(chunks)}
+            future_to_idx = {
+                executor.submit(_summarize_chunk, file_name, file_type, chunk, idx, len(chunks), progress_ctx): idx
+                for idx, chunk in enumerate(chunks)
+            }
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 try:
@@ -98,7 +132,7 @@ def _summarize_file_from_chunks(file_name: str, file_type: str, chunks: List[str
         logger.warning("Parallel chunk summarization failed for file=%s, falling back to sequential: %s", file_name, exc)
         for idx, chunk in enumerate(chunks):
             try:
-                chunk_summaries[idx] = _summarize_chunk(file_name, file_type, chunk, idx, len(chunks)).strip()
+                chunk_summaries[idx] = _summarize_chunk(file_name, file_type, chunk, idx, len(chunks), progress_ctx).strip()
             except Exception as inner_exc:
                 logger.warning("Sequential chunk summary failed for file=%s chunk=%s: %s", file_name, idx, inner_exc)
                 chunk_summaries[idx] = f"[Chunk {idx + 1} summary failed: {inner_exc}]"
@@ -115,10 +149,22 @@ def _summarize_file_from_chunks(file_name: str, file_type: str, chunks: List[str
         + "\n\n".join(chunk_summaries)
     )
     meta_summary = ask_gpt(combined_prompt, model=SUMMARY_MODEL, temperature=0.2)
+    if progress_ctx:
+        progress_manager.update(
+            progress_ctx["job_id"],
+            step="file_summary",
+            message=f"Consolidated summaries for {file_name}",
+            file_name=file_name,
+            file_id=progress_ctx.get("file_id"),
+            file_status="done",
+            file_progress=100,
+            progress=progress_ctx.get("base_progress", 0) + progress_ctx.get("per_file_share", 0),
+            log=f"Meta-summary created for {file_name}",
+        )
     return meta_summary.strip(), chunk_summaries
 
 
-def preprocess_files(files: List[Dict]) -> List[Dict]:
+def preprocess_files(files: List[Dict], progress_ctx: Optional[Dict] = None) -> List[Dict]:
     """
     Preprocess uploaded files:
     - Detect type
@@ -128,6 +174,11 @@ def preprocess_files(files: List[Dict]) -> List[Dict]:
     Returns list of dicts containing summaries only (no raw content).
     """
     file_summaries: List[Dict] = [None] * len(files)
+    if progress_ctx:
+        total_files = max(progress_ctx.get("total_files") or len(files), 1)
+        per_file_share = 60 / total_files  # allocate 60% of overall progress to files
+        progress_ctx["per_file_share"] = per_file_share
+        progress_ctx["base_progress"] = 10  # after initial reading/detection
 
     def _process_file(idx: int, file_dict: Dict) -> Dict:
         path = Path(file_dict["path"])
@@ -135,6 +186,7 @@ def preprocess_files(files: List[Dict]) -> List[Dict]:
         content, total_lines = _read_file(path)
         if not content:
             return {
+                "file_id": file_dict.get("file_id"),
                 "name": file_dict.get("name") or path.name,
                 "file_type": file_type,
                 "summary": "Unable to read file content.",
@@ -146,6 +198,7 @@ def preprocess_files(files: List[Dict]) -> List[Dict]:
         chunks = _chunk_text(content)
         if not chunks:
             return {
+                "file_id": file_dict.get("file_id"),
                 "name": file_dict.get("name") or path.name,
                 "file_type": file_type,
                 "summary": "Empty file.",
@@ -155,8 +208,25 @@ def preprocess_files(files: List[Dict]) -> List[Dict]:
             }
 
         logger.info("Preprocessing file=%s type=%s chunks=%s lines=%s", path.name, file_type, len(chunks), total_lines)
-        meta_summary, chunk_summaries = _summarize_file_from_chunks(file_dict.get("name") or path.name, file_type, chunks)
+        if progress_ctx:
+            progress_ctx["base_progress"] = 10 + progress_ctx.get("per_file_share", 0) * idx
+            progress_ctx["file_id"] = file_dict.get("file_id")
+            progress_manager.update(
+                progress_ctx["job_id"],
+                step="chunking",
+                message=f"Chunking {file_dict.get('name') or path.name}",
+                file_name=file_dict.get("name") or path.name,
+                file_id=file_dict.get("file_id"),
+                file_status="chunking",
+                file_progress=5,
+                chunk_total=len(chunks),
+                log=f"Split {file_dict.get('name') or path.name} into {len(chunks)} chunks",
+            )
+        meta_summary, chunk_summaries = _summarize_file_from_chunks(
+            file_dict.get("name") or path.name, file_type, chunks, progress_ctx=progress_ctx
+        )
         return {
+            "file_id": file_dict.get("file_id"),
             "name": file_dict.get("name") or path.name,
             "file_type": file_type,
             "summary": meta_summary,
@@ -172,6 +242,16 @@ def preprocess_files(files: List[Dict]) -> List[Dict]:
                 idx = future_to_idx[future]
                 try:
                     file_summaries[idx] = future.result()
+                    if progress_ctx:
+                        progress_manager.update(
+                            progress_ctx["job_id"],
+                            step="file_done",
+                            message=f"Finished {file_summaries[idx]['name']}",
+                            file_name=file_summaries[idx]["name"],
+                            file_status="done",
+                            file_progress=100,
+                            log=f"File completed: {file_summaries[idx]['name']}",
+                        )
                 except Exception as exc:
                     logger.warning("File preprocessing failed for %s: %s", files[idx].get("name"), exc)
                     file_summaries[idx] = {

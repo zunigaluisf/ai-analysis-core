@@ -7,6 +7,7 @@ from typing import List, Dict, Optional
 from app.ai_engine import ANALYSIS_MODEL, ask_gpt
 from app.preprocessing import preprocess_files
 from app.prompt_builder import build_prompt
+from app.progress import progress_manager
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +32,22 @@ def _extract_section(markdown: str, title: str) -> str:
     return "\n".join(collected).strip()
 
 
-def analyze(files: List[Dict], context: Dict) -> Dict:
+def analyze(files: List[Dict], context: Dict, job_id: Optional[str] = None) -> Dict:
     logger.info("Starting analysis with %s files and context keys=%s", len(files), list(context.keys()))
-    file_summaries = preprocess_files(files)
+    progress_ctx = {"job_id": job_id, "total_files": len(files)} if job_id else None
+    if progress_ctx:
+        progress_manager.update(job_id, progress=5, step="reading_files", message="Reading uploaded files")
 
+    file_summaries = preprocess_files(files, progress_ctx=progress_ctx)
+
+    if progress_ctx:
+        progress_manager.update(job_id, progress=65, step="building_prompt", message="Preparing analysis prompt")
     prompt = build_prompt(file_summaries, context)
+    if progress_ctx:
+        progress_manager.update(job_id, progress=75, step="ai_analysis", message="Running AI analysis")
     ai_response = ask_gpt(prompt, model=ANALYSIS_MODEL, temperature=0.35)
+    if progress_ctx:
+        progress_manager.update(job_id, progress=95, step="finalizing", message="Finalizing report")
     logger.info("AI analysis complete using model=%s", ANALYSIS_MODEL)
 
     # Parse expected sections from Markdown response
