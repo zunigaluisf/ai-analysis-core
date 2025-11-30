@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from app.analyzer import analyze
 from app.progress import progress_manager
+from app.ai_engine import ask_gpt, ANALYSIS_MODEL
 
 
 def setup_logging():
@@ -170,6 +171,54 @@ async def get_progress(job_id: str):
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return job
+
+
+@app.post("/compare")
+async def compare_markdown(payload: dict):
+    report_a_md = payload.get("report_a_markdown", "")
+    report_b_md = payload.get("report_b_markdown", "")
+    context = payload.get("context", "")
+    if not report_a_md or not report_b_md:
+        raise HTTPException(status_code=400, detail="Missing markdown content")
+
+    system_prompt = (
+        "You are a senior performance engineer. Compare two performance test result reports written in Markdown. "
+        "Find differences, improvements, regressions, bottlenecks, architecture clues, error patterns, stability patterns, "
+        "and any significant contrast between the two. Produce a concise summary, list of key differences, and recommendations."
+    )
+    user_prompt = (
+        f"Context: {context}\n\n"
+        "Report A (baseline):\n"
+        "--------------------\n"
+        f"{report_a_md}\n\n"
+        "Report B (new):\n"
+        "--------------------\n"
+        f"{report_b_md}\n\n"
+        "Respond in JSON with keys: ai_comparison_summary (string), ai_key_differences (array of strings), ai_recommendations (array of strings)."
+    )
+
+    try:
+        response_text = ask_gpt(
+            f"{system_prompt}\n\n{user_prompt}",
+            model=ANALYSIS_MODEL,
+            temperature=0.1,
+        )
+        # Try to parse JSON; if fails, wrap response
+        try:
+            parsed = json.loads(response_text)
+            return {
+                "ai_comparison_summary": parsed.get("ai_comparison_summary") or response_text,
+                "ai_key_differences": parsed.get("ai_key_differences") or [],
+                "ai_recommendations": parsed.get("ai_recommendations") or [],
+            }
+        except Exception:
+            return {
+                "ai_comparison_summary": response_text,
+                "ai_key_differences": [],
+                "ai_recommendations": [],
+            }
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"AI comparison failed: {exc}")
 def _detect_file_type(name: str) -> str:
     lower = name.lower()
     if lower.endswith(".log"):
